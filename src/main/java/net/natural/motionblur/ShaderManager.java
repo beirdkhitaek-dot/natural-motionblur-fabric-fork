@@ -45,6 +45,12 @@ public class ShaderManager {
     private static final ManagedUniformBuffer f5EntityUBO   = new ManagedUniformBuffer("PreEntityBlurUniforms",  UBO_SIZE);
     private static final ManagedUniformBuffer postRenderUBO = new ManagedUniformBuffer("PostRenderBlurUniforms", UBO_SIZE);
 
+    private static final Set<String> diagSeen = new HashSet<>();
+    /** Logs each distinct message once, so latest.log shows exactly where the blur stops. */
+    private static void diag(String msg) {
+        if (diagSeen.add(msg)) System.out.println("[NaturalMotionBlur] " + msg);
+    }
+
     private enum BlurPass { NORMAL_PRE, SPECIAL_F5, NORMAL_POST }
 
     public static void captureAllocator(GraphicsResourceAllocator allocator) { frameAllocator = allocator; }
@@ -100,7 +106,8 @@ public class ShaderManager {
     }
 
     private static void applyBlurInternal(BlurPass pass, boolean includeTemporal) {
-        if (frameAllocator == null) return;
+        if (frameAllocator == null) { diag("frame allocator not captured (" + pass + ")"); return; }
+        diag("blur requested: " + pass);
 
         ConfigEntries config = ConfigManager.getConfig();
         Minecraft     client = Minecraft.getInstance();
@@ -198,15 +205,17 @@ public class ShaderManager {
         try {
             net.minecraft.client.renderer.ShaderManager.CompilationCache cache =
                     ((ShaderManagerAccessor) client.getShaderManager()).getCompilationCache();
-            if (cache == null) return null;
+            if (cache == null) { diag("compilation cache is null (" + shaderName + ")"); return null; }
             PostChain chain = cache.getOrLoadPostChain(
                     Identifier.fromNamespaceAndPath(NaturalMotionBlurMod.ID, shaderName),
                     LevelTargetBundle.MAIN_TARGETS);
             loadErrorLogged.remove(shaderName);
             return chain;
         } catch (Exception e) {
-            if (loadErrorLogged.add(shaderName))
-                System.err.println("[NaturalMotionBlur] Failed to load " + displayName + " shader: " + e.getMessage());
+            if (loadErrorLogged.add(shaderName)) {
+                System.err.println("[NaturalMotionBlur] Failed to load " + displayName + " shader: " + e);
+                e.printStackTrace();
+            }
             return null;
         }
     }
@@ -215,10 +224,10 @@ public class ShaderManager {
 
     private static void writeAndRun(PostChain processor, String uboKey, ManagedUniformBuffer managedUBO, float blendFactor, float viewW, float viewH, int blurProfile, int sampleAmount, Minecraft client) {
         List<PostPass> passes = ((PostChainAccessor) processor).getPasses();
-        if (passes.isEmpty()) return;
+        if (passes.isEmpty()) { diag("post chain has no passes (" + uboKey + ")"); return; }
 
         Map<String, GpuBuffer> uniformBuffers = ((PostPassAccessor) passes.getFirst()).getCustomUniforms();
-        if (!uniformBuffers.containsKey(uboKey)) return;
+        if (!uniformBuffers.containsKey(uboKey)) { diag("uniform block " + uboKey + " missing, found " + uniformBuffers.keySet()); return; }
 
         // Replace the shader loader's placeholder buffer with ours and close the old one
         GpuBuffer ubo = managedUBO.put(processor, uniformBuffers, uboKey);
@@ -240,7 +249,10 @@ public class ShaderManager {
             }
 
             processor.process(client.getMainRenderTarget(), frameAllocator);
+            diag("blur pass OK (" + uboKey + ")");
         } catch (RuntimeException e) {
+            diag("blur pass FAILED (" + uboKey + "): " + e);
+            if (diagSeen.add("trace" + uboKey)) e.printStackTrace();
             if (managedUBO.resetIfClosed(e)) return;
             throw e;
         }
