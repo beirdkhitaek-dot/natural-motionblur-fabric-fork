@@ -47,7 +47,7 @@ void main() {
     float depth = texelFetch(MainDepthSampler, texel, 0).x;
 
     // Iris Hand Fix
-    if (depth < 0.56) {color = texture(MainSampler, texCoord); return;}
+    // PHONE: depth early-out removed
     // Depth blend inconsistency fix
     float dilatedDepth = depth;
     dilatedDepth = min(dilatedDepth, texelFetch(MainDepthSampler, texel + ivec2( 1,  0), 0).x);
@@ -55,7 +55,7 @@ void main() {
     dilatedDepth = min(dilatedDepth, texelFetch(MainDepthSampler, texel + ivec2( 0,  1), 0).x);
     dilatedDepth = min(dilatedDepth, texelFetch(MainDepthSampler, texel + ivec2( 0, -1), 0).x);
 
-    vec2 velocity = clampLength(texCoord - reproject(vec3(texCoord, dilatedDepth)).xy);
+    vec2 velocity = clampLength(texCoord - reproject(vec3(texCoord, 1.0)).xy);
 
     float speed = length(velocity);
     int baseSamples = clamp(int(ceil(speed * float(sampleCount))), 4, sampleCount);
